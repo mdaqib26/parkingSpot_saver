@@ -77,9 +77,9 @@ class MainActivity : AppCompatActivity() {
             val mapsIntent = Intent(Intent.ACTION_VIEW, uri).apply {
                 setPackage("com.google.android.apps.maps")
             }
-            if (mapsIntent.resolveActivity(packageManager) != null) {
+            try {
                 startActivity(mapsIntent)
-            } else {
+            } catch (_: Exception) {
                 startActivity(Intent(Intent.ACTION_VIEW, uri))
             }
         }
