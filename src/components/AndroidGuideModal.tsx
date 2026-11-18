@@ -7,7 +7,7 @@ interface AndroidGuideModalProps {
   onClose: () => void;
 }
 
-type CodeTab = 'kotlin' | 'layout' | 'manifest' | 'gradle';
+type CodeTab = 'kotlin' | 'layout' | 'manifest' | 'gradle' | 'workflow';
 
 const KOTLIN_MAIN_ACTIVITY = `package com.example.parkingspotsaver
 
@@ -239,7 +239,7 @@ android {
 
     defaultConfig {
         applicationId = "com.example.parkingspotsaver"
-        minSdk = 24
+        minSdk = 21
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"
@@ -261,12 +261,60 @@ dependencies {
     implementation("com.google.android.gms:play-services-location:21.3.0")
 }`;
 
+const WORKFLOW_YAML = `name: Build Android APK
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check project files
+        run: |
+          ls -la
+          ls -la android-app
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Ensure Android SDK 34 and licenses
+        run: |
+          SDK_MANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ -x "$SDK_MANAGER" ]; then
+            yes | "$SDK_MANAGER" --licenses >/dev/null 2>&1 || true
+            "$SDK_MANAGER" "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+          fi
+
+      - name: Install Gradle 8.7 and Build Debug APK
+        working-directory: android-app
+        run: |
+          curl -sSL https://services.gradle.org/distributions/gradle-8.7-bin.zip -o /tmp/gradle-8.7.zip
+          unzip -q /tmp/gradle-8.7.zip -d /tmp/gradle-dist
+          /tmp/gradle-dist/gradle-8.7/bin/gradle assembleDebug --no-daemon --stacktrace
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SpotLock-APK
+          path: android-app/app/build/outputs/apk/debug/app-debug.apk`;
+
 export const AndroidGuideModal: React.FC<AndroidGuideModalProps> = ({
   isOpen,
   onClose,
 }) => {
   const [copied, setCopied] = useState(false);
   const [tab, setTab] = useState<CodeTab>('kotlin');
+  const [downloadingZip, setDownloadingZip] = useState(false);
+  const [zipError, setZipError] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
@@ -277,7 +325,9 @@ export const AndroidGuideModal: React.FC<AndroidGuideModalProps> = ({
         ? XML_LAYOUT
         : tab === 'manifest'
           ? ANDROID_MANIFEST
-          : BUILD_GRADLE;
+          : tab === 'gradle'
+            ? BUILD_GRADLE
+            : WORKFLOW_YAML;
 
   const handleCopy = async () => {
     try {
@@ -286,6 +336,33 @@ export const AndroidGuideModal: React.FC<AndroidGuideModalProps> = ({
       window.setTimeout(() => setCopied(false), 2000);
     } catch {
       // Ignore clipboard failure
+    }
+  };
+
+  const handleDownloadZip = async () => {
+    setZipError(null);
+    setDownloadingZip(true);
+    try {
+      const res = await fetch('/api/export-zip');
+      const contentType = res.headers.get('content-type') || '';
+      if (!res.ok || !contentType.includes('zip')) {
+        throw new Error('Could not fetch a valid ZIP archive.');
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'spotlock-github.zip';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 3000);
+    } catch (err) {
+      setZipError(
+        err instanceof Error ? err.message : 'Download failed. Try again.'
+      );
+    } finally {
+      setDownloadingZip(false);
     }
   };
 
@@ -344,14 +421,22 @@ export const AndroidGuideModal: React.FC<AndroidGuideModalProps> = ({
           <p className="mt-1.5 text-xs leading-relaxed text-[#9CA3AF]">
             Includes the full web app, <code className="text-amber-300">android-app/</code>, <code className="text-amber-300">render.yaml</code>, and a GitHub Actions workflow that builds <code className="text-amber-300">app-debug.apk</code> automatically in your repo&apos;s <strong className="text-white">Actions</strong> tab.
           </p>
-          <a
-            href="/api/export-zip"
-            download="spotlock-github.zip"
-            className="mt-3 inline-flex min-h-[42px] items-center gap-2 rounded-xl bg-amber-500 px-4 text-xs font-bold text-[#0B0D11] hover:bg-amber-400"
+          <button
+            type="button"
+            onClick={handleDownloadZip}
+            disabled={downloadingZip}
+            className="mt-3 inline-flex min-h-[42px] items-center gap-2 rounded-xl bg-amber-500 px-4 text-xs font-bold text-[#0B0D11] hover:bg-amber-400 disabled:opacity-60"
           >
             <Download className="h-4 w-4" aria-hidden="true" />
-            <span>Download GitHub ZIP</span>
-          </a>
+            <span>
+              {downloadingZip ? 'Preparing ZIP…' : 'Download GitHub ZIP'}
+            </span>
+          </button>
+          {zipError && (
+            <p className="mt-2 text-xs text-red-400" role="alert">
+              {zipError}
+            </p>
+          )}
         </div>
 
         <div className="mt-4 rounded-2xl border border-white/10 bg-[#0B0D11] p-4">
@@ -427,6 +512,17 @@ export const AndroidGuideModal: React.FC<AndroidGuideModalProps> = ({
               }`}
             >
               build.gradle.kts
+            </button>
+            <button
+              type="button"
+              onClick={() => setTab('workflow')}
+              className={`min-h-[34px] rounded-lg px-2.5 text-xs font-semibold ${
+                tab === 'workflow'
+                  ? 'bg-amber-500 text-[#0B0D11]'
+                  : 'bg-[#1C212B] text-[#9CA3AF] hover:text-white'
+              }`}
+            >
+              build-apk.yml
             </button>
           </div>
 

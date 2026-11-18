@@ -73,6 +73,11 @@ function buildZipBuffer(entries: Array<{ name: string; data: Buffer }>): Buffer 
   const centralParts: Buffer[] = [];
   let offset = 0;
 
+  // Valid MS-DOS date (2026-11-18) and time (00:00:00) so strict OS unzippers accept the archive
+  const dosTime = 0x0000;
+  const dosDate = ((2026 - 1980) << 9) | (11 << 5) | 18;
+  const utf8Flag = 0x0800;
+
   for (const entry of entries) {
     const nameBuf = Buffer.from(entry.name, 'utf8');
     const compressed = zlib.deflateRawSync(entry.data);
@@ -81,10 +86,10 @@ function buildZipBuffer(entries: Array<{ name: string; data: Buffer }>): Buffer 
     const localHeader = Buffer.alloc(30);
     localHeader.writeUInt32LE(0x04034b50, 0);
     localHeader.writeUInt16LE(20, 4);
-    localHeader.writeUInt16LE(0, 6);
+    localHeader.writeUInt16LE(utf8Flag, 6);
     localHeader.writeUInt16LE(8, 8);
-    localHeader.writeUInt16LE(0, 10);
-    localHeader.writeUInt16LE(0, 12);
+    localHeader.writeUInt16LE(dosTime, 10);
+    localHeader.writeUInt16LE(dosDate, 12);
     localHeader.writeUInt32LE(crc, 14);
     localHeader.writeUInt32LE(compressed.length, 18);
     localHeader.writeUInt32LE(entry.data.length, 22);
@@ -97,10 +102,10 @@ function buildZipBuffer(entries: Array<{ name: string; data: Buffer }>): Buffer 
     centralHeader.writeUInt32LE(0x02014b50, 0);
     centralHeader.writeUInt16LE(20, 4);
     centralHeader.writeUInt16LE(20, 6);
-    centralHeader.writeUInt16LE(0, 8);
+    centralHeader.writeUInt16LE(utf8Flag, 8);
     centralHeader.writeUInt16LE(8, 10);
-    centralHeader.writeUInt16LE(0, 12);
-    centralHeader.writeUInt16LE(0, 14);
+    centralHeader.writeUInt16LE(dosTime, 12);
+    centralHeader.writeUInt16LE(dosDate, 14);
     centralHeader.writeUInt32LE(crc, 16);
     centralHeader.writeUInt32LE(compressed.length, 20);
     centralHeader.writeUInt32LE(entry.data.length, 24);
@@ -181,6 +186,7 @@ app.get('/api/export-zip', (_req, res) => {
       'Content-Disposition',
       'attachment; filename="spotlock-github.zip"'
     );
+    res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Content-Length', String(zipBuf.length));
     res.send(zipBuf);
   } catch (err: unknown) {
